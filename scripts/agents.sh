@@ -203,7 +203,8 @@ main() {
   done < <(pi_processes)
 
   # Second pass (awk): per-directory " #N" suffixing + final 11-field rows,
-  # then sort by rank, then age.
+  # then sort by rank, then age. Emits nothing when there are no agents.
+  [ "${#rows[@]}" -gt 0 ] || return 0
   printf '%s\n' "${rows[@]}" | awk -F'\t' -v OFS='\t' '
     { rows[NR]=$0; cwd[NR]=$12; start[NR]=$13; cnt[$12]++ }
     END {

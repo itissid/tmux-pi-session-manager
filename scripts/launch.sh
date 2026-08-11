@@ -36,13 +36,13 @@ ensure_extension() {
 }
 
 main() {
-  local dir="" name="" resume="" window="" attach=1 cmd
+  local dir="" name="" resume="" window="" attach=1 cmd explicit_dir=0
   local extra_args=()
   local -a args=("$@")
 
   while [ "${#args[@]}" -gt 0 ]; do
     case "${args[0]}" in
-      --dir) dir="${args[1]}"; args=("${args[@]:2}") ;;
+      --dir) dir="${args[1]}"; explicit_dir=1; args=("${args[@]:2}") ;;
       --name) name="${args[1]}"; args=("${args[@]:2}") ;;
       --resume) resume="${args[1]}"; args=("${args[@]:2}") ;;
       --window) window="${args[1]}"; args=("${args[@]:2}") ;;
@@ -70,10 +70,16 @@ main() {
   local pi_cmd
   pi_cmd="$(get_tmux_option @pi_tmux_command 'pi')"
   if [ -n "$resume" ]; then
-    local sfile
+    local sfile sfile_cwd
     sfile="$(find_session_file "$resume")"
     [ -n "$sfile" ] || { printf 'pi-tmux: no session found for id %s\n' "$resume" >&2; exit 1; }
     cmd=("$pi_cmd" --session "$sfile")
+    # Resume into the project directory the original session ran in (unless
+    # the caller passed an explicit --dir).
+    sfile_cwd="$(head -n1 "$sfile" 2>/dev/null | jq -r '.cwd // empty' 2>/dev/null)"
+    if [ "$explicit_dir" -eq 0 ] && [ -n "$sfile_cwd" ] && [ -d "$sfile_cwd" ]; then
+      dir="$sfile_cwd"
+    fi
     printf 'pi-tmux: resuming session %s\n' "$sfile" >&2
   else
     cmd=("$pi_cmd")

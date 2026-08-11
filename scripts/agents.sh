@@ -14,11 +14,11 @@
 #   3  pid        hidden — pi process pid (kill)
 #   4  kind       hidden — dedicated|loose
 #   5  session_id hidden — pi session uuid (or pid:<pid> without extension)
-#   6  age_secs   hidden — numeric age for sorting
+#   6  age_secs   hidden — numeric age (time since start) for sorting
 #   7  status     visible — "● WORKING" &c (ANSI)
 #   8  project    visible — session name or dir basename (+ " #N" per dir)
 #   9  dir        visible — cwd, ~-shortened
-#   10 age        visible — "12s" / "2m" / "14m" / "1h"
+#   10 age        visible — "12s" / "2m" / "14m" / "1h" (time since start)
 #   11 loc        visible — "session:window.pane"
 #   12 raw_cwd    internal — grouping for " #N" suffixing
 #   13 started_at internal — ordering within a directory
@@ -189,11 +189,13 @@ main() {
       if [ "$started2_num" -gt 100000000000 ] 2>/dev/null; then
         started2_num=$((started2_num / 1000))
       fi
-      if [ -n "$activity2" ] && [ "$activity2" -gt 0 ] 2>/dev/null; then
-        age_secs=$(( (now * 1000 - activity2) / 1000 ))
-        [ "$age_secs" -lt 0 ] && age_secs=0
+      if [ -n "$started2_num" ] && [ "$started2_num" -gt 0 ] 2>/dev/null; then
+        # Age = time since the agent started (grows monotonically).
+        # `last_activity_at` updates on every event, so idle-time would
+        # keep resetting to 0-3s while the agent works.
+        age_secs=$((now - started2_num)); [ "$age_secs" -lt 0 ] && age_secs=0
       else
-        age_secs=""
+        age_secs=$((now - start)); [ "$age_secs" -lt 0 ] && age_secs=0
       fi
     else
       sid="pid:$pid"; status="unknown"; use_sname=""

@@ -37,7 +37,9 @@ prefix + p   open the agent picker (fzf, live preview)
 - **Picker with live preview** — fzf shows `status · project · dir · age ·
   location` and refreshes itself while open (fzf `--listen` API): agents
   appear/disappear as they start/stop, statuses update in place, and the dot
-  before `WORKING` spins (`⠋⠙⠹…`). The preview pane shows the agent's
+  before `WORKING` spins (`⠋⠙⠹…`). `age` is the time since the agent
+  started (it grows monotonically — `last_activity` updates on every event,
+  so idle-time would keep resetting). The preview pane shows the agent's
   terminal (`tmux capture-pane`, re-run on every refresh). Enter jumps,
   `ctrl-x` kills (confirmed). Older fzf without `--listen` falls back to a
   static list.

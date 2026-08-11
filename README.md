@@ -35,8 +35,12 @@ prefix + p   open the agent picker (fzf, live preview)
   (highest rank) and you get a **notification** — showing only the project and
   directory, never the question text.
 - **Picker with live preview** — fzf shows `status · project · dir · age ·
-  location`; the preview pane shows a live `tmux capture-pane` of the agent.
-  Enter jumps, `ctrl-x` kills (confirmed), `R` reloads.
+  location` and refreshes itself while open (fzf `--listen` API): agents
+  appear/disappear as they start/stop, statuses update in place, and the dot
+  before `WORKING` spins (`⠋⠙⠹…`). The preview pane shows the agent's
+  terminal (`tmux capture-pane`, re-run on every refresh). Enter jumps,
+  `ctrl-x` kills (confirmed). Older fzf without `--listen` falls back to a
+  static list.
 - **Jump** — loose agents: switch your client to their session/window/pane.
   Dedicated sessions: attach in a popup while the host client moves to the
   origin window. Popup-in-popup is handled by closing the inner popup first.
@@ -210,6 +214,7 @@ tmux options (`set -g @pi_tmux_*`):
 | `@pi_tmux_args` | *(empty)* | extra args for `pi` (e.g. `--model x`) |
 | `@pi_tmux_popup_width` / `@pi_tmux_popup_height` | `90%` | popup geometry |
 | `@pi_tmux_kill_confirm` | `on` | fzf confirmation before kill |
+| `@pi_tmux_picker_refresh` | `0.12` | live picker refresh interval (seconds); full discovery every 4th tick, spinner frames in between |
 | `@pi_tmux_fzf_options` | *(empty)* | extra fzf flags |
 | `@pi_tmux_process_names` | `pi` | space-separated process names to detect (rebrands) |
 | `@pi_tmux_auto_install_extension` | `on` | copy the bundled extension on launch |

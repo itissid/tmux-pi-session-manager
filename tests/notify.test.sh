@@ -27,6 +27,39 @@ rm -f "$PSM_NOTIFY_LOG"
 "$ROOT/scripts/notify.sh" >/dev/null 2>&1
 assert_no_file "dedup: no second notification" "$PSM_NOTIFY_LOG"
 
+rm -f "$PSM_BELL_DEV"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_no_file "dedup: no second bell" "$PSM_BELL_DEV"
+
+t_section "terminal bell accompanies notifications (kitty bell)"
+printf '{"terminal_bell":true}\n' > "$(psm_config_file)"
+write_state "sess-401" "$(jq '.notify = {last_sent_status: null, last_sent_at: null}' "$(state_file)")"
+rm -f "$PSM_BELL_DEV"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+bell="$(od -c "$PSM_BELL_DEV" 2>/dev/null)"
+assert_contains "bell byte written on notification" "$bell" "\\a"
+# config gate
+printf '{"terminal_bell":false}\n' > "$(psm_config_file)"
+write_state "sess-401" "$(jq '.notify = {last_sent_status: null, last_sent_at: null}' "$(state_file)")"
+rm -f "$PSM_BELL_DEV"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_no_file "terminal_bell=false suppresses bell" "$PSM_BELL_DEV"
+# backend bell: bell without notify-send
+printf '{"terminal_bell":true,"notification_backend":"bell"}\n' > "$(psm_config_file)"
+write_state "sess-401" "$(jq '.notify = {last_sent_status: null, last_sent_at: null}' "$(state_file)")"
+rm -f "$PSM_BELL_DEV" "$PSM_NOTIFY_LOG"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_file "bell-only backend rings" "$PSM_BELL_DEV"
+assert_no_file "bell-only backend skips notify-send" "$PSM_NOTIFY_LOG"
+# backend off: nothing at all
+printf '{"terminal_bell":true,"notification_backend":"off"}\n' > "$(psm_config_file)"
+write_state "sess-401" "$(jq '.notify = {last_sent_status: null, last_sent_at: null}' "$(state_file)")"
+rm -f "$PSM_BELL_DEV"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_no_file "backend off suppresses bell too" "$PSM_BELL_DEV"
+# restore defaults for the rest of the suite
+rm -f "$(psm_config_file)"
+
 t_section "waiting -> working -> waiting re-notifies"
 write_state "sess-401" "$(jq '.status = "working"' "$(state_file)")"
 "$ROOT/scripts/notify.sh" >/dev/null 2>&1

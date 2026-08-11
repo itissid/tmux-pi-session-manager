@@ -26,11 +26,43 @@ notify_id() {
   printf '%s' "$h"
 }
 
-# send_notification <kind> <state-file> — fire notify-send for one agent.
+# ring_bell — terminal bell with kitty's bell sound. The agent often runs in a
+# pi-* session with NO attached client, so a BEL inside the pane only sets a
+# tmux flag and never reaches the user's terminal. Instead we ring every
+# attached tmux client (their Kitty window plays the sound), falling back to
+# our own controlling tty. PSM_BELL_DEV overrides the target (tests).
+ring_bell() {
+  local tty rung=0
+  if [ -n "${PSM_BELL_DEV:-}" ]; then
+    { printf '\a'; } >"$PSM_BELL_DEV" 2>/dev/null || true
+    return 0
+  fi
+  if command -v tmux >/dev/null 2>&1; then
+    while IFS= read -r tty; do
+      [ -n "$tty" ] || continue
+      case "$tty" in
+        /dev/pts/*|/dev/tty*) : ;;
+        *) continue ;;
+      esac
+      if { printf '\a'; } >"$tty" 2>/dev/null; then rung=1; fi
+    done < <(tmux list-clients -F '#{client_tty}' 2>/dev/null)
+  fi
+  if [ "$rung" -eq 0 ]; then
+    { printf '\a'; } >/dev/tty 2>/dev/null || true
+  fi
+}
+
+# send_notification <kind> <state-file> — fire notify-send for one agent and
+# (optionally) ring the terminal bell.
 send_notification() {
-  local kind="$1" file="$2" backend title body icon sid cwd sname project loc
+  local kind="$1" file="$2" backend terminal_bell title body icon sid cwd sname project loc
   backend="$(psm_config_get notification_backend 'auto')"
+  terminal_bell="$(psm_config_get terminal_bell 'true')"
   [ "$backend" = "off" ] && return 0
+  if [ "$terminal_bell" = "true" ]; then
+    ring_bell
+  fi
+  [ "$backend" = "bell" ] && return 0
   command -v notify-send >/dev/null 2>&1 || return 0
   sid="$(basename "$file" .json)"
   cwd="$(jq -r '.cwd // ""' "$file")"

@@ -48,7 +48,8 @@ interface Config {
   notify_on_error: boolean;
   notify_on_done: boolean;
   notify_on_blocked: boolean;
-  notification_backend: "auto" | "notify-send" | "off";
+  notification_backend: "auto" | "notify-send" | "bell" | "off";
+  terminal_bell: boolean;
   min_attention_duration_ms: number;
 }
 function defaultConfig(): Config {
@@ -59,6 +60,7 @@ function defaultConfig(): Config {
     notify_on_done: false,
     notify_on_blocked: true,
     notification_backend: "auto",
+    terminal_bell: true,
     min_attention_duration_ms: 5000,
   };
 }
@@ -72,9 +74,10 @@ function readConfig(): Config {
     if (typeof data.notify_on_error === "boolean") cfg.notify_on_error = data.notify_on_error;
     if (typeof data.notify_on_done === "boolean") cfg.notify_on_done = data.notify_on_done;
     if (typeof data.notify_on_blocked === "boolean") cfg.notify_on_blocked = data.notify_on_blocked;
-    if (data.notification_backend === "auto" || data.notification_backend === "notify-send" || data.notification_backend === "off") {
+    if (data.notification_backend === "auto" || data.notification_backend === "notify-send" || data.notification_backend === "bell" || data.notification_backend === "off") {
       cfg.notification_backend = data.notification_backend;
     }
+    if (typeof data.terminal_bell === "boolean") cfg.terminal_bell = data.terminal_bell;
     if (typeof data.min_attention_duration_ms === "number" && data.min_attention_duration_ms >= 0) {
       cfg.min_attention_duration_ms = data.min_attention_duration_ms;
     }
@@ -301,9 +304,54 @@ function tmuxLoc(): string {
   }
 }
 
+// ringBell — terminal bell with kitty's bell sound. The agent often runs in a
+// pi-* session with NO attached client, so a BEL written to the pane's pty
+// only sets a tmux flag and never reaches the user's terminal. Instead we ring
+// every attached tmux client (their terminal emulator plays the bell sound),
+// falling back to our own controlling tty. PSM_BELL_DEV overrides the target.
+function ringBell(): void {
+  const dev = process.env.PSM_BELL_DEV;
+  if (dev) {
+    try {
+      writeFileSync(dev, "\x07");
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  let rung = false;
+  try {
+    const out = execFileSync("tmux", ["list-clients", "-F", "#{client_tty}"], {
+      encoding: "utf8",
+      timeout: 2000,
+    });
+    for (const line of out.split("\n")) {
+      const tty = line.trim();
+      if (!/^\/dev\/(pts|tty)\d/.test(tty)) continue;
+      try {
+        writeFileSync(tty, "\x07");
+        rung = true;
+      } catch {
+        /* skip un-writable tty */
+      }
+    }
+  } catch {
+    // tmux unavailable or no server — fall through to our own tty
+  }
+  if (!rung) {
+    try {
+      writeFileSync("/dev/tty", "\x07");
+    } catch {
+      debugLog("no controlling tty; skipping terminal bell");
+    }
+  }
+}
+
 function sendNotification(kind: "waiting" | "error" | "done" | "blocked"): void {
   const cfg = readConfig();
   if (cfg.notification_backend === "off") return;
+  if (cfg.terminal_bell) ringBell();
+  if (cfg.notification_backend === "bell") return; // terminal bell only
   const notify = resolveNotifySend();
   if (!notify) {
     debugLog("notify-send not found; skipping notification");

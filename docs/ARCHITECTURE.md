@@ -289,7 +289,27 @@ before computing ages/ordering.
    dies with its last window (pi is the window command); a loose pane keeps its
    shell.
 4. From the picker, `ctrl-x` asks for confirmation via a small nested fzf
-   (`@pi_tmux_kill_confirm`, default on), then reloads the list.
+   (`@pi_tmux_kill_confirm`, default on); the live list refreshes on its own.
+
+### Live updates + spinner
+
+The picker keeps itself fresh without polling in the shell: fzf is started
+with `--listen`, which binds a local HTTP server and exports `FZF_PORT` to
+child processes (`start:execute-silent` writes it to a temp file). A small
+background loop then POSTs `reload(cat $rowsfile)` — a *finite* command —
+every `@pi_tmux_picker_refresh` seconds. Reload replaces the list (never
+appends), so rows stay rank-sorted and deduplicated while statuses change.
+
+- every 4th tick re-runs full discovery (`agents.sh`); the ticks in between
+  swap the `WORKING` dot for the next braille spinner frame (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`)
+  via a tiny awk substitution on the cached rows — so the spinner animates at
+  full tick rate while discovery only runs a quarter as often.
+- the preview is a *finite* `tmux capture-pane`; fzf re-runs it on every
+  reload, so the pane preview refreshes automatically. (A `while true` preview
+  was tried first: its output leaks into fzf's item stream across reloads,
+  inflating the counter — a finite command avoids that entirely.)
+- the loop dies with the picker; `fzf` without `--listen` support falls back
+  to a static list.
 
 ## 6. Notifications (event-driven, deduplicated)
 

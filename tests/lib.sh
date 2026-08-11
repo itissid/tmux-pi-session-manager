@@ -85,6 +85,7 @@ make_sandbox() {
   export PSM_TMUX_OPTS="$SB/opts.tsv"
   export PSM_TMUX_MARKERS="$SB/markers.tsv"
   export PSM_TMUX_DISPLAY="$SB/display.txt"
+  export PSM_BELL_DEV="$SB/bell.log"
   # Deterministic HOME-based resolution for the launcher's ensure_extension.
   export PI_CODING_AGENT_DIR="$SB/pi-agent"
   mkdir -p "$SB/pi-agent/extensions" "$SB/pi-agent/sessions"

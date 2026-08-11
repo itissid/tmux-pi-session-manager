@@ -39,8 +39,6 @@ fi
 preview_refresh="$(get_tmux_option @pi_tmux_preview_refresh '1')"
 preview_lines="$(get_tmux_option @pi_tmux_preview_lines '5')"
 kill_confirm="$(get_tmux_option @pi_tmux_kill_confirm 'on')"
-w="$(get_tmux_option @pi_tmux_popup_width '90%')"
-h="$(get_tmux_option @pi_tmux_popup_height '90%')"
 
 # ctrl-x: confirm-kill the highlighted agent, then reload.
 if [ "$kill_confirm" = "on" ]; then

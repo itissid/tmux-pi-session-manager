@@ -9,7 +9,7 @@
 #              the popup, over the window it was launched from.
 #   loose      an agent in any other pane — focused in place.
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 

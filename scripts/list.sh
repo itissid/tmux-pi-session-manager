@@ -11,7 +11,7 @@
 #                            overlay) and the picker reopens full-size on the
 #                            outer host client, never popup-in-popup.
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 

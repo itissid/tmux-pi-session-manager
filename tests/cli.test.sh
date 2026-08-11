@@ -93,5 +93,17 @@ t_section "unknown command"
 out="$("$CLI" bogus 2>&1)"
 assert_eq "unknown command exit" "$?" "2"
 
+t_section "symlinked install (CLI on PATH)"
+# the documented install is `ln -s .../bin/pi-tmux ~/.local/bin/pi-tmux`;
+# BASH_SOURCE[0] is then the symlink, so DIR resolution must follow it
+ln -s "$CLI" "$SB/bin/pi-tmux"
+out="$(pi-tmux version)"
+assert_contains "version via symlink" "$out" "pi-tmux"
+out="$(pi-tmux list --json)"
+assert_eq "list via symlink" "$(printf '%s' "$out" | jq -r 'length')" "2"
+out="$(pi-tmux install-extension 2>&1)"
+assert_file "install-extension via symlink" "$(pi_extensions_dir)/pi-tmux-session-manager.ts"
+assert_contains "install message" "$out" "installed extension"
+
 mkdir -p "$TEST_ROOT/results"
 printf '%s %s\n' "$PASS" "$FAIL" > "$TEST_ROOT/results/$SUITE_NAME"

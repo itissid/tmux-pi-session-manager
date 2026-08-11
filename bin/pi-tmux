@@ -18,7 +18,7 @@
 #   doctor                check dependencies and setup
 #   help                  this message
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 # shellcheck source=scripts/helpers.sh
 . "$DIR/scripts/helpers.sh"
 
@@ -55,7 +55,7 @@ cmd_list() {
         s = $7
         gsub(/^[^A-Z?]*/, "", s); gsub(/[ \t]+.*$/, "", s)
         printf "  {\"rank\":%s,\"pane\":\"%s\",\"pid\":%s,\"kind\":\"%s\",\"session_id\":\"%s\",\"status\":\"%s\",\"project\":\"%s\",\"dir\":\"%s\",\"age\":\"%s\",\"age_secs\":%s,\"loc\":\"%s\"}",
-          $1, $2, $3, $4, $5, (s == "?" ? "unknown" : tolower(s)), $8, $9, $10, $6, $11
+          $1, $2, $3, $4, $5, (s == "?" ? "unknown" : tolower(s)), $8, $9, $10, ($6 == "" ? 0 : $6), $11
       }
       END { print "\n]" }
     '

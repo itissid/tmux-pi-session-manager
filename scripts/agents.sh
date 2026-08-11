@@ -23,7 +23,7 @@
 #   12 raw_cwd    internal — grouping for " #N" suffixing
 #   13 started_at internal — ordering within a directory
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 

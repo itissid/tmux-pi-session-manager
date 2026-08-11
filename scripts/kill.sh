@@ -9,7 +9,7 @@
 # any signal is sent. Termination is graceful: SIGTERM, then SIGKILL after
 # 3s if still alive. State files are removed afterwards.
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 

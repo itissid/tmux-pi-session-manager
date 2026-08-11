@@ -10,7 +10,7 @@
 # plugin leaves your binding alone and prints a hint — set the @pi_tmux_*_key
 # option to your preferred key instead.
 set -uo pipefail
-CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CURRENT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=../scripts/helpers.sh
 . "$CURRENT_DIR/../scripts/helpers.sh"
 

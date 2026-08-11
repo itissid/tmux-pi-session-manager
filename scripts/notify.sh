@@ -11,7 +11,7 @@
 # the agent's status *changes* (waiting/error). WAITING → WAITING sends
 # nothing; WAITING → WORKING → WAITING sends again.
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 

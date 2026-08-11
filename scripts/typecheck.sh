@@ -7,7 +7,7 @@
 # runtime via jiti, which does not require types to pass.
 set -uo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # project root
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"   # project root
 
 # Resolve pi's package root.
 pi_pkg_dir() {

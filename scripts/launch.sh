@@ -9,7 +9,7 @@
 # `pi --session <file>` for resume). The user is attached in a popup when the
 # command runs inside tmux, or with a plain attach otherwise.
 set -uo pipefail
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
 . "$DIR/helpers.sh"
 

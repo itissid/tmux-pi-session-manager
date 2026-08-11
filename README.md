@@ -216,7 +216,8 @@ tmux options (`set -g @pi_tmux_*`):
 | `@pi_tmux_args` | *(empty)* | extra args for `pi` (e.g. `--model x`) |
 | `@pi_tmux_popup_width` / `@pi_tmux_popup_height` | `90%` | popup geometry |
 | `@pi_tmux_kill_confirm` | `on` | fzf confirmation before kill |
-| `@pi_tmux_picker_refresh` | `0.12` | live picker refresh interval (seconds); full discovery every 4th tick, spinner frames in between |
+| `@pi_tmux_picker_refresh` | `0.12` | live picker refresh interval (seconds) — spinner frames between full refreshes |
+| `@pi_tmux_age_refresh` | `5` | seconds between full discovery runs (statuses + the age column); set to `1` for near-instant updates |
 | `@pi_tmux_fzf_options` | *(empty)* | extra fzf flags |
 | `@pi_tmux_process_names` | `pi` | space-separated process names to detect (rebrands) |
 | `@pi_tmux_auto_install_extension` | `on` | copy the bundled extension on launch |

@@ -13,7 +13,8 @@
 # the agent list every @pi_tmux_picker_refresh seconds through fzf's HTTP API
 # (reload action, /dev/tcp — no curl needed). Working agents get an animated
 # spinner dot; rows stay rank-sorted and deduplicated (each reload replaces
-# the list). Older fzf versions fall back to a static list.
+# the list). Full discovery (new statuses, the age column) runs every
+# @pi_tmux_age_refresh seconds. Older fzf versions fall back to a static list.
 set -uo pipefail
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 # shellcheck source=helpers.sh
@@ -45,6 +46,7 @@ fi
 preview_lines="$(get_tmux_option @pi_tmux_preview_lines '5')"
 kill_confirm="$(get_tmux_option @pi_tmux_kill_confirm 'on')"
 picker_refresh="$(get_tmux_option @pi_tmux_picker_refresh '0.12')"
+age_refresh="$(get_tmux_option @pi_tmux_age_refresh '5')"
 
 # ctrl-x: confirm-kill the highlighted agent. No reload needed — the live
 # loop refreshes the list on its own.
@@ -71,6 +73,13 @@ fi
 # fast without re-running discovery every frame.
 SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 SPINNER_NFRAMES=${#SPINNER_CHARS}
+
+# Full discovery (which recomputes the age column) runs every age_refresh
+# seconds; the spinner frames keep cycling on the cached rows in between.
+full_every=1
+if awk -v a="$age_refresh" -v p="$picker_refresh" 'BEGIN { exit !(p > 0 && a >= p) }'; then
+  full_every="$(awk -v a="$age_refresh" -v p="$picker_refresh" 'BEGIN { n = a / p + 0.5; if (n < 1) n = 1; printf "%d", n }')"
+fi
 
 fzf_args=(--ansi --delimiter=$'\t' --with-nth=7,8,9,10,11 \
   --reverse --cycle --no-sort \
@@ -99,7 +108,7 @@ if [ "$live" -eq 1 ]; then
     frame=0
     rows=""
     while true; do
-      if [ $((frame % 4)) -eq 0 ]; then
+      if [ $((frame % full_every)) -eq 0 ]; then
         rows="$("$DIR/agents.sh" 2>/dev/null)"
       fi
       c="${SPINNER_CHARS:$((frame % SPINNER_NFRAMES)):1}"

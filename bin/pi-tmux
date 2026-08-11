@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# pi-tmux — CLI for tmux-pi-session-manager.
+#
+# Manage, discover, monitor, and jump between Pi agents running inside tmux.
+#
+# Commands:
+#   launch [opts]         launch a pi agent for a directory (new tmux session)
+#   resume <id>           relaunch a previous pi session by its session id
+#   list [--json]         list running agents (tsv rows or JSON)
+#   pick                  open the interactive fzf picker (in a popup from tmux)
+#   current [--json]      show the agent running in the current pane, if any
+#   status <target>       show the state file for one agent (pid|sid|pane)
+#   kill <target> [--yes] terminate an agent (verified, graceful)
+#   focus <target>        jump the current client to an agent's pane
+#   notify [--watch]      reconcile notifications / optional death watcher
+#   install-extension     install the pi extension (auto-discovery + status)
+#   uninstall-extension   remove the pi extension
+#   doctor                check dependencies and setup
+#   help                  this message
+set -uo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/helpers.sh
+. "$DIR/scripts/helpers.sh"
+
+PSM_TMUX="${PSM_TMUX:-tmux}"
+
+version() {
+  printf 'pi-tmux %s\n' "$(cat "$DIR/VERSION" 2>/dev/null || printf '0.1.0')"
+}
+
+usage() {
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# resolve_row <target> — agents.sh row for a pid/session-id/pane-id.
+resolve_row() {
+  local t="$1"
+  case "$t" in
+    %*)  awk -F'\t' -v p="$t" '$2 == p { print; exit }' < <("$DIR/scripts/agents.sh") ;;
+    *-*-*-*-*) awk -F'\t' -v s="$t" '$5 == s { print; exit }' < <("$DIR/scripts/agents.sh") ;;
+    *[!0-9]*|'') return 1 ;;
+    *) awk -F'\t' -v p="$t" '$3 == p { print; exit }' < <("$DIR/scripts/agents.sh") ;;
+  esac
+}
+
+cmd_list() {
+  local rows
+  rows="$("$DIR/scripts/agents.sh")"
+  if [ "${1:-}" = "--json" ]; then
+    printf '%s' "$rows" | awk -F'\t' -v OFS='\n' '
+      BEGIN { print "[" }
+      {
+        if (NR > 1) print ","
+        gsub(/\033\[[0-9;]*m/, "", $7)
+        s = $7
+        gsub(/^[^A-Z?]*/, "", s); gsub(/[ \t]+.*$/, "", s)
+        printf "  {\"rank\":%s,\"pane\":\"%s\",\"pid\":%s,\"kind\":\"%s\",\"session_id\":\"%s\",\"status\":\"%s\",\"project\":\"%s\",\"dir\":\"%s\",\"age\":\"%s\",\"age_secs\":%s,\"loc\":\"%s\"}",
+          $1, $2, $3, $4, $5, (s == "?" ? "unknown" : tolower(s)), $8, $9, $10, $6, $11
+      }
+      END { print "\n]" }
+    '
+  else
+    printf '%s\n' "$rows" | cat -v
+  fi
+}
+
+cmd_current() {
+  local pane row
+  pane="$("$PSM_TMUX" display-message -p '#{pane_id}' 2>/dev/null)"
+  [ -n "$pane" ] || { printf 'pi-tmux: not inside tmux\n' >&2; exit 1; }
+  row="$(awk -F'\t' -v p="$pane" '$2 == p { print; exit }' < <("$DIR/scripts/agents.sh"))"
+  if [ -z "$row" ]; then
+    printf 'pi-tmux: no pi agent in the current pane\n' >&2
+    exit 1
+  fi
+  if [ "${1:-}" = "--json" ]; then
+    awk -F'\t' '
+      BEGIN { gsub(/\033\[[0-9;]*m/, "", $7) }
+      { s = $7; gsub(/^[^A-Z?]*/, "", s); gsub(/[ \t]+.*$/, "", s)
+        printf "{\"pane\":\"%s\",\"pid\":%s,\"kind\":\"%s\",\"session_id\":\"%s\",\"status\":\"%s\",\"project\":\"%s\",\"dir\":\"%s\",\"age\":\"%s\",\"loc\":\"%s\"}\n", $2, $3, $4, $5, (s == "?" ? "unknown" : tolower(s)), $8, $9, $10, $11 }
+    ' <<< "$row"
+  else
+    awk -F'\t' '{ printf "%s\t%s\t%s\t%s\t%s\n", $7, $8, $9, $10, $11 }' <<< "$row" | cat -v
+  fi
+}
+
+cmd_status() {
+  local target="${1:-}" row sid file
+  [ -n "$target" ] || { usage >&2; exit 2; }
+  row="$(resolve_row "$target")" || { printf 'pi-tmux: no running agent matches %s\n' "$target" >&2; exit 1; }
+  sid="$(printf '%s' "$row" | cut -f5)"
+  file="$(psm_agents_dir)/${sid}.json"
+  if [ -f "$file" ]; then
+    jq . "$file"
+  else
+    printf '%s\n' "$row" | cat -v
+  fi
+}
+
+cmd_focus() {
+  local target="${1:-}" client="" row pane session
+  [ -n "$target" ] || { usage >&2; exit 2; }
+  case "${2:-}" in -c) client="${3:-}" ;; esac
+  row="$(resolve_row "$target")" || { printf 'pi-tmux: no running agent matches %s\n' "$target" >&2; exit 1; }
+  pane="$(printf '%s' "$row" | cut -f2)"
+  session="$("$PSM_TMUX" display-message -p -t "$pane" '#{session_name}' 2>/dev/null)"
+  [ -n "$session" ] || { printf 'pi-tmux: agent pane %s no longer exists\n' "$pane" >&2; exit 1; }
+  if [ -n "$client" ]; then
+    "$PSM_TMUX" switch-client -c "$client" -t "$session" 2>/dev/null \
+      || { printf 'pi-tmux: cannot switch client %s\n' "$client" >&2; exit 1; }
+  else
+    "$PSM_TMUX" switch-client -t "$session" 2>/dev/null
+  fi
+  "$PSM_TMUX" select-window -t "$pane" 2>/dev/null
+  "$PSM_TMUX" select-pane -t "$pane" 2>/dev/null
+  printf 'pi-tmux: focused %s (%s)\n' "$target" "$pane"
+}
+
+cmd_doctor() {
+  local ok=1
+  printf 'pi-tmux doctor\n'
+  for tool in tmux fzf jq pi; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '  ✓ %-12s %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '  ✗ %-12s MISSING (required)\n' "$tool"
+      ok=0
+    fi
+  done
+  if command -v notify-send >/dev/null 2>&1; then
+    printf '  ✓ %-12s %s\n' 'notify-send' "$(command -v notify-send)"
+  else
+    printf '  ~ %-12s not found (notifications disabled; optional)\n' 'notify-send'
+  fi
+  printf '  state dir: %s\n' "$(psm_state_dir)"
+  printf '  config dir: %s\n' "$(psm_config_dir)"
+  printf '  pi agent dir: %s\n' "$(pi_agent_dir)"
+  local ext
+  ext="$(pi_extensions_dir)/pi-tmux-session-manager.ts"
+  if [ -f "$ext" ]; then
+    printf '  ✓ pi extension installed (%s)\n' "$ext"
+  else
+    printf '  ~ pi extension NOT installed — run `pi-tmux install-extension` for status/notifications\n'
+  fi
+  if ! command -v "$PSM_TMUX" >/dev/null 2>&1 && ! "$PSM_TMUX" -V >/dev/null 2>&1; then
+    printf '  ✗ tmux binary not usable: %s\n' "$PSM_TMUX"
+    ok=0
+  fi
+  exit $((ok ? 0 : 1))
+}
+
+cmd_install_extension() {
+  local src ext_dir ext_file
+  src="$DIR/pi/extension.ts"
+  [ -f "$src" ] || { printf 'pi-tmux: bundled extension not found\n' >&2; exit 1; }
+  ext_dir="$(pi_extensions_dir)"
+  ext_file="$ext_dir/pi-tmux-session-manager.ts"
+  mkdir -p "$ext_dir" || exit 1
+  cp "$src" "$ext_file" || { printf 'pi-tmux: failed to copy extension\n' >&2; exit 1; }
+  chmod 644 "$ext_file"
+  printf 'pi-tmux: installed extension → %s\n' "$ext_file"
+  printf 'pi-tmux: reload running pi sessions with /reload (or restart pi) to activate\n'
+}
+
+cmd_uninstall_extension() {
+  local ext_file
+  ext_file="$(pi_extensions_dir)/pi-tmux-session-manager.ts"
+  if [ -f "$ext_file" ]; then
+    rm -f "$ext_file"
+    printf 'pi-tmux: removed %s\n' "$ext_file"
+  else
+    printf 'pi-tmux: extension not installed\n'
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+  [ -n "$cmd" ] || { usage; exit 2; }
+  shift || true
+  case "$cmd" in
+    launch) "$DIR/scripts/launch.sh" "$@" ;;
+    resume) "$DIR/scripts/launch.sh" --resume "$@" ;;
+    list) cmd_list "$@" ;;
+    pick) "$DIR/scripts/picker.sh" "$@" ;;
+    current) cmd_current "$@" ;;
+    status) cmd_status "$@" ;;
+    kill) "$DIR/scripts/kill.sh" "$@" ;;
+    focus) cmd_focus "$@" ;;
+    notify) "$DIR/scripts/notify.sh" "$@" ;;
+    install-extension) cmd_install_extension ;;
+    uninstall-extension) cmd_uninstall_extension ;;
+    doctor) cmd_doctor ;;
+    version) version ;;
+    help | --help | -h) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"

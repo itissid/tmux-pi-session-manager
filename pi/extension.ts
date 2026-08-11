@@ -47,6 +47,7 @@ interface Config {
   notify_on_waiting: boolean;
   notify_on_error: boolean;
   notify_on_done: boolean;
+  notify_on_blocked: boolean;
   notification_backend: "auto" | "notify-send" | "off";
   min_attention_duration_ms: number;
 }
@@ -56,6 +57,7 @@ function defaultConfig(): Config {
     notify_on_waiting: true,
     notify_on_error: true,
     notify_on_done: false,
+    notify_on_blocked: true,
     notification_backend: "auto",
     min_attention_duration_ms: 5000,
   };
@@ -69,6 +71,7 @@ function readConfig(): Config {
     if (typeof data.notify_on_waiting === "boolean") cfg.notify_on_waiting = data.notify_on_waiting;
     if (typeof data.notify_on_error === "boolean") cfg.notify_on_error = data.notify_on_error;
     if (typeof data.notify_on_done === "boolean") cfg.notify_on_done = data.notify_on_done;
+    if (typeof data.notify_on_blocked === "boolean") cfg.notify_on_blocked = data.notify_on_blocked;
     if (data.notification_backend === "auto" || data.notification_backend === "notify-send" || data.notification_backend === "off") {
       cfg.notification_backend = data.notification_backend;
     }
@@ -100,7 +103,7 @@ interface AgentState {
   session_name: string | null;
   pid: number;
   cwd: string;
-  status: "working" | "waiting" | "idle" | "error";
+  status: "working" | "waiting" | "idle" | "error" | "blocked";
   alive: boolean;
   started_at: number;
   updated_at: number;
@@ -109,6 +112,9 @@ interface AgentState {
   last_error_at: number | null;
   has_worked: boolean;
   last_stop_reason: string | null;
+  is_blocked: boolean;
+  blocked_at: number | null;
+  blocked_reason: "question" | "permission" | null;
   notify: { last_sent_status: string | null; last_sent_at: number | null };
 }
 
@@ -128,24 +134,63 @@ let st: AgentState = {
   last_error_at: null,
   has_worked: false,
   last_stop_reason: null,
+  is_blocked: false,
+  blocked_at: null,
+  blocked_reason: null,
   notify: { last_sent_status: null, last_sent_at: null },
 };
 
 let agentActive = false;
+let blockedCount = 0; // concurrent blockers (question dialog + permission dialogs)
 let dirty = false;
 let flushTimer: NodeJS.Timeout | null = null;
 let writeChain: Promise<void> = Promise.resolve();
 let lastWriteAt = 0;
 const ACTIVITY_WRITE_THROTTLE_MS = 1000;
 
-// deriveStatus(): priority working > error > waiting > idle
+// deriveStatus(): priority blocked > working > error > waiting > idle
 function deriveStatus(): AgentState["status"] {
+  if (st.is_blocked) return "blocked";
   if (agentActive) return "working";
   if (st.last_error_at !== null && (st.last_user_input_at === null || st.last_error_at > st.last_user_input_at)) {
     return "error";
   }
   if (st.has_worked) return "waiting";
   return "idle";
+}
+
+// Blocked state: the agent is waiting on the USER (a question dialog or a
+// permission dialog), not on the model. Counted so overlapping dialogs cannot
+// leave the state stuck — blocked stays until every blocker is released.
+function block(reason: "question" | "permission"): void {
+  blockedCount += 1;
+  st.is_blocked = true;
+  st.blocked_at = Date.now();
+  st.blocked_reason = reason;
+  st.last_activity_at = st.blocked_at;
+  maybeNotify("blocked");
+  touch(true);
+}
+
+function release(): void {
+  if (blockedCount > 0) blockedCount -= 1;
+  if (blockedCount > 0) return;
+  st.is_blocked = false;
+  st.blocked_at = null;
+  st.blocked_reason = null;
+  // re-arm notifications: a fresh question/permission must notify again
+  st.notify.last_sent_status = null;
+  touch(true);
+}
+
+// Force-unblock: the user typed something or a new turn started — whatever
+// was blocking is considered answered.
+function forceUnblock(): void {
+  blockedCount = 0;
+  st.is_blocked = false;
+  st.blocked_at = null;
+  st.blocked_reason = null;
+  st.notify.last_sent_status = null;
 }
 
 // State file I/O (atomic, serialized, throttled for activity)
@@ -167,6 +212,9 @@ function serializeState(): string {
       last_error_at: st.last_error_at,
       has_worked: st.has_worked,
       last_stop_reason: st.last_stop_reason,
+      is_blocked: st.is_blocked,
+      blocked_at: st.blocked_at,
+      blocked_reason: st.blocked_reason,
       notify: st.notify,
     },
     null,
@@ -253,7 +301,7 @@ function tmuxLoc(): string {
   }
 }
 
-function sendNotification(kind: "waiting" | "error" | "done"): void {
+function sendNotification(kind: "waiting" | "error" | "done" | "blocked"): void {
   const cfg = readConfig();
   if (cfg.notification_backend === "off") return;
   const notify = resolveNotifySend();
@@ -274,6 +322,14 @@ function sendNotification(kind: "waiting" | "error" | "done"): void {
   } else if (kind === "done") {
     title = "Pi agent completed";
     body = `${project} · ${loc || "tmux"}\n${dir}\nThe current task has completed.`;
+  } else if (kind === "blocked") {
+    // Privacy-safe: never include the question text, tool args, or file paths.
+    title = "Pi agent needs your attention";
+    icon = "dialog-question";
+    body =
+      st.blocked_reason === "permission"
+        ? `${project} · ${loc || "tmux"}\n${dir}\nThe agent needs your permission to continue.`
+        : `${project} · ${loc || "tmux"}\n${dir}\nThe agent asked you a question and is waiting for your answer.`;
   } else {
     title = "Pi agent waiting for input";
     icon = "dialog-warning";
@@ -309,6 +365,10 @@ function maybeNotify(next: AgentState["status"]): void {
       return;
     }
     st.notify = { last_sent_status: "waiting", last_sent_at: Date.now() };
+  } else if (next === "blocked") {
+    if (!cfg.notify_on_blocked) return;
+    sendNotification("blocked");
+    st.notify = { last_sent_status: "blocked", last_sent_at: Date.now() };
   } else if (next === "error") {
     if (!cfg.notify_on_error) return;
     sendNotification("error");
@@ -341,6 +401,10 @@ export default function (pi: ExtensionAPI): void {
       st.last_user_input_at = null;
       st.last_error_at = null;
       st.has_worked = prev?.has_worked ?? false;
+      blockedCount = 0;
+      st.is_blocked = false;
+      st.blocked_at = null;
+      st.blocked_reason = null;
       agentActive = false;
       touch(true);
       debugLog(`session_start id=${sid} file=${sfile} cwd=${st.cwd}`);
@@ -361,6 +425,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("input", () => {
     try {
       st.last_user_input_at = Date.now();
+      forceUnblock(); // the user is present; whatever was blocked is answered
       touch();
     } catch (err) {
       debugLog(`input error: ${String(err)}`);
@@ -373,6 +438,7 @@ export default function (pi: ExtensionAPI): void {
       st.has_worked = true;
       st.last_error_at = null;
       st.last_activity_at = Date.now();
+      forceUnblock(); // a new turn implies the user already engaged
       maybeNotify("working"); // resets dedup marker
       touch(true);
     } catch (err) {
@@ -436,12 +502,60 @@ export default function (pi: ExtensionAPI): void {
     }
   });
 
-  for (const evt of ["turn_start", "turn_end", "tool_execution_start", "tool_execution_update", "tool_execution_end", "message_update"] as const) {
+  for (const evt of ["turn_start", "turn_end", "tool_execution_update", "message_update"] as const) {
     // the union of event names is wider than any single overload — cast
     pi.on(evt as any, () => {
       try {
         st.last_activity_at = Date.now();
         touch();
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
+  // tool_execution_start/end: an `ask_user_question` call blocks until the
+  // user answers (the tool awaits the question UI), so the agent is BLOCKED.
+  pi.on("tool_execution_start" as any, (event: { toolName?: string }) => {
+    try {
+      st.last_activity_at = Date.now();
+      if (event?.toolName === "ask_user_question") {
+        block("question");
+      } else {
+        touch();
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+  pi.on("tool_execution_end" as any, (event: { toolName?: string }) => {
+    try {
+      st.last_activity_at = Date.now();
+      if (event?.toolName === "ask_user_question") {
+        release();
+      } else {
+        touch();
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+
+  // permission-gate (or any extension publishing permission:* events): the
+  // confirmation dialog blocks the tool until the user decides.
+  const eventBus = (pi as any).events as { on?: (ch: string, cb: (data: unknown) => void) => void } | undefined;
+  if (eventBus?.on) {
+    eventBus.on("permission:ask", (data) => {
+      try {
+        debugLog(`permission:ask ${JSON.stringify(data)}`);
+        block("permission");
+      } catch {
+        /* ignore */
+      }
+    });
+    eventBus.on("permission:resolved", () => {
+      try {
+        release();
       } catch {
         /* ignore */
       }

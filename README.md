@@ -27,9 +27,13 @@ prefix + p   open the agent picker (fzf, live preview)
   session (`pi-<hash8>[-<n>]`); agents are never collapsed by cwd. The picker
   disambiguates duplicates with `#1`, `#2`, …
 - **Live status** — a Pi extension (auto-installed on launch) subscribes to Pi
-  session events and derives `WORKING / ERROR / WAITING / IDLE` per agent,
-  writing a small JSON state file per session. Agents without the extension
-  still appear (status `?`).
+  session events and derives `WORKING / BLOCKED / ERROR / WAITING / IDLE` per
+  agent, writing a small JSON state file per session. Agents without the
+  extension still appear (status `?`).
+- **BLOCKED status** — while the agent waits on you (an `ask_user_question`
+  dialog or a permission confirmation), the status flips to `● BLOCKED`
+  (highest rank) and you get a **notification** — showing only the project and
+  directory, never the question text.
 - **Picker with live preview** — fzf shows `status · project · dir · age ·
   location`; the preview pane shows a live `tmux capture-pane` of the agent.
   Enter jumps, `ctrl-x` kills (confirmed), `R` reloads.
@@ -40,9 +44,10 @@ prefix + p   open the agent picker (fzf, live preview)
   fingerprint (no PID-reuse accidents), SIGTERM → SIGKILL escalation, state
   cleanup.
 - **Notifications** — the extension notifies **in-process, event-driven**:
-  *waiting for input* (deduped — WAITING→WAITING is silent, but
-  WAITING→WORKING→WAITING notifies again), *agent error*, optional *task
-  done*. `notify-send` on Linux; configurable, off by default for done.
+  *blocked* (question/permission dialog — content-free body), *waiting for
+  input* (deduped — WAITING→WAITING is silent, but WAITING→WORKING→WAITING
+  notifies again), *agent error*, optional *task done*. `notify-send` on
+  Linux; configurable, off by default for done.
 - **`pi-tmux` CLI** — everything from the shell: `list`, `pick`, `launch`,
   `resume`, `kill`, `focus`, `current`, `status`, `notify`, `doctor`,
   `install-extension`.
@@ -166,9 +171,16 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design. In short:
    agents without the extension.
 2. **Status** (`pi/extension.ts`): subscribe to Pi session events
    (`session_start`, `agent_start`, `agent_settled`, `message_end`,
-   `auto_retry_*`, `session_shutdown`, …), derive a status with priority
-   `working > error > waiting > idle`, and atomically write
+   `tool_execution_start/end`, `auto_retry_*`, `session_shutdown`, …), derive a
+   status with priority `blocked > working > error > waiting > idle`, and
+   atomically write
    `$XDG_STATE_HOME/pi-tmux-session-manager/agents/<session-id>.json`.
+   `blocked` is entered when `tool_execution_start` reports
+   `ask_user_question` (the tool blocks until the user answers) or when an
+   extension publishes `permission:ask`/`permission:resolved` (e.g. a
+   permission gate); it is cleared on the matching end event, on `input`, and
+   on `agent_start` (safety clears). A counter keeps overlapping dialogs from
+   getting stuck.
 3. **Notifications**: sent by the extension itself on status *transitions*
    (dedup marker in the state file), so no polling is needed. `notify-send`
    with a stable `-r` replacement id per session.
@@ -180,7 +192,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design. In short:
 6. **Notifications contract** (bash + extension agree): a notification fires
    only when status *changes*; WAITING→WAITING sends nothing; the marker is
    reset when the agent leaves the notifiable state, so WAITING→WORKING→WAITING
-   notifies again.
+   notifies again. `blocked` notifications never include the question text or
+   tool arguments — only project and directory.
 
 ---
 
@@ -210,6 +223,7 @@ read by both the extension and the bash side):
   "notify_on_waiting": true,
   "notify_on_error": true,
   "notify_on_done": false,
+  "notify_on_blocked": true,
   "notification_backend": "auto",
   "min_attention_duration_ms": 5000
 }
@@ -221,6 +235,7 @@ read by both the extension and the bash side):
 | `notify_on_waiting` | `true` | notify when the agent finishes and awaits input |
 | `notify_on_error` | `true` | notify when the agent reports an error |
 | `notify_on_done` | `false` | notify when a task completes (`stop` reason) |
+| `notify_on_blocked` | `true` | notify when the agent asks a question or needs a permission decision |
 | `notification_backend` | `auto` | `auto` / `notify-send` / `off` |
 | `min_attention_duration_ms` | `5000` | don't notify for turns settled faster than this |
 

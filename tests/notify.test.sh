@@ -64,6 +64,34 @@ rm -f "$PSM_NOTIFY_LOG"
 "$ROOT/scripts/notify.sh" >/dev/null 2>&1
 assert_no_file "error dedup" "$PSM_NOTIFY_LOG"
 
+t_section "blocked notifications (question/permission) + dedup + config gate"
+printf '{"notify_on_error":true,"notify_on_blocked":true}\n' > "$(psm_config_file)"
+write_state "sess-401" "$(printf '{"session_id":"sess-401","pid":401,"status":"blocked","cwd":"%s","is_blocked":true,"started_at":%s,"notify":{"last_sent_status":null,"last_sent_at":null}}' "$SB/projA" "$((now * 1000))")"
+rm -f "$PSM_NOTIFY_LOG"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+nlog="$(cat "$PSM_NOTIFY_LOG" 2>/dev/null)"
+assert_contains "blocked notification sent" "$nlog" "needs your attention"
+assert_eq "blocked marker recorded" "$(jq -r '.notify.last_sent_status' "$(state_file)")" "blocked"
+rm -f "$PSM_NOTIFY_LOG"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_no_file "blocked dedup (no state change)" "$PSM_NOTIFY_LOG"
+# blocked -> working resets the marker -> a later blocked re-notifies
+write_state "sess-401" "$(jq '.status = "working" | .is_blocked = false | .notify.last_sent_status = "blocked"' "$(state_file)")"
+rm -f "$PSM_NOTIFY_LOG"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_no_file "working after blocked: silent, marker reset" "$PSM_NOTIFY_LOG"
+assert_eq "marker re-armed" "$(jq -r '.notify.last_sent_status' "$(state_file)")" ""
+write_state "sess-401" "$(jq '.status = "blocked" | .is_blocked = true' "$(state_file)")"
+rm -f "$PSM_NOTIFY_LOG"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_file "blocked re-notifies after working cycle" "$PSM_NOTIFY_LOG"
+# config gate
+printf '{"notify_on_blocked":false}\n' > "$(psm_config_file)"
+write_state "sess-401" "$(printf '{"session_id":"sess-401","pid":401,"status":"blocked","cwd":"%s","is_blocked":true,"started_at":%s,"notify":{"last_sent_status":null,"last_sent_at":null}}' "$SB/projA" "$((now * 1000))")"
+rm -f "$PSM_NOTIFY_LOG"
+"$ROOT/scripts/notify.sh" >/dev/null 2>&1
+assert_no_file "notify_on_blocked=false suppresses" "$PSM_NOTIFY_LOG"
+
 t_section "stale state removed without notification"
 write_state "sess-401" "$(printf '{"session_id":"sess-401","pid":402,"status":"waiting","cwd":"%s"}' "$SB/projA")"
 rm -f "$PSM_NOTIFY_LOG"

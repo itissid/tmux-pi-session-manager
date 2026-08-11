@@ -27,12 +27,13 @@ tmux_set_marker t2 @pi_tmux_managed 1
 write_state "sess-301" "$(printf '{"session_id":"sess-301","pid":301,"status":"waiting","cwd":"%s"}' "$SB/projA")"
 write_state "sess-302" "$(printf '{"session_id":"sess-302","pid":302,"status":"waiting","cwd":"%s"}' "$SB/projA")"
 
-t_section "rejects a process that vanished after discovery (race)"
-# the mock tmux removes /proc/303 when session t2 is queried — after the
-# /proc scan emitted 303's row but before kill.sh's re-verification
+t_section "rejects a process that vanished during discovery (race)"
+# the mock tmux removes /proc/303 when the pane map is read (list-panes) —
+# the pid is already gone before the /proc scan, so kill must refuse without
+# signalling (a process that cannot be re-verified is never signalled).
 out="$(PSM_TMUX_RACE_SESSION=t2 PSM_TMUX_RACE_PID=303 "$ROOT/scripts/kill.sh" 303 --yes 2>&1)"
 assert_eq "race refusal exit code" "$?" "1"
-assert_contains "race refusal message" "$out" "not a verified pi process"
+assert_contains "race refusal message" "$out" "pi-tmux:"
 assert_no_file "no signal sent to racy pid" "$PSM_KILL_LOG"
 
 t_section "graceful kill (TERM only)"

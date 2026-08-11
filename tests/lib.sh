@@ -127,7 +127,17 @@ install_mocks() {
 # mock tmux: log everything; answer known queries from scenario files.
 printf 'tmux %s\n' "$*" >> "$PSM_TMUX_LOG"
 if [ "$1" = "list-panes" ] && [ "$2" = "-a" ]; then
-  cat "$PSM_TMUX_PANES" 2>/dev/null
+  # race hook: discovery has started — simulate the process dying between the
+  # /proc scan and kill's re-verification (kill.sh must refuse to signal it)
+  if [ -n "${PSM_TMUX_RACE_SESSION:-}" ] && grep -q "${PSM_TMUX_RACE_SESSION}" "$PSM_TMUX_PANES" 2>/dev/null; then
+    rm -rf "$PSM_PROC_DIR/${PSM_TMUX_RACE_PID:-}"
+  fi
+  # Real tmux resolves #{@pi_tmux_managed} per session; emulate that by
+  # appending the session's marker from markers.tsv as a 5th column.
+  awk -F'\t' '
+    { if (FILENAME == ARGV[1]) { if ($2 == "@pi_tmux_managed") m[$1] = $3; next }
+      print $0 "\t" (($3 in m) ? m[$3] : "") }
+  ' "$PSM_TMUX_MARKERS" "$PSM_TMUX_PANES" 2>/dev/null
 elif [ "$1" = "list-sessions" ] && [ "$2" = "-F" ]; then
   cat "$PSM_TMUX_SESSIONS" 2>/dev/null
 elif [ "$1" = "display-message" ] && [ "$2" = "-p" ]; then

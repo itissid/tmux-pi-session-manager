@@ -30,24 +30,34 @@ DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PSM_TMUX="${PSM_TMUX:-tmux}"
 
 # 1+2. pi processes: pid / tty / cwd / start
+# Btime, hz and process names are resolved ONCE; each candidate is fingerprinted
+# with bash builtins (comm/cmdline/stat) and only candidates hit the exe/cwd
+# readlinks. No per-process subprocess or tmux calls — this is the hot loop.
 pi_processes() {
-  local proc d pid tty cwd start
+  local proc d pid tty cwd start btime hz names
   proc="$(proc_dir)"
+  names="${PSM_PROCESS_NAMES:-$(get_tmux_option @pi_tmux_process_names 'pi')}"
+  btime="$(awk '/^btime / { print $2 }' "$proc/stat" 2>/dev/null)"
+  hz="$(getconf CLK_TCK 2>/dev/null || printf '100')"
   for d in "$proc"/[0-9]*; do
     [ -d "$d" ] || continue
     pid="${d##*/}"
-    pid_is_pi "$pid" || continue
-    tty="$(pid_tty_pts "$pid")"
+    pid_is_pi "$pid" "$names" "$proc" || continue
+    pid_parse_stat "$pid" || continue
+    tty="$(tty_nr_to_pts "$PSM_TTY_NR")"
+    [ -n "$tty" ] || continue
     cwd="$(pid_cwd "$pid")"
-    start="$(pid_start_epoch "$pid")"
+    start=$((btime + PSM_START_TICKS / hz))
     printf '%s\t%s\t%s\t%s\n' "$pid" "$tty" "$cwd" "$start"
   done
 }
 
 # 3. tmux pane map: tty -> pane/window/session (one tmux call)
-# Emits: tty_without_dev \t pane_id \t session_name \t loc
+# Emits: tty_without_dev \t pane_id \t session_name \t loc \t managed-marker
+# The last column is the session's @pi_tmux_managed option (tmux format var),
+# which saves one `show-options` call per agent during discovery.
 tmux_pane_map() {
-  "$PSM_TMUX" list-panes -a -F $'#{pane_tty}\t#{pane_id}\t#{session_name}\t#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null |
+  "$PSM_TMUX" list-panes -a -F $'#{pane_tty}\t#{pane_id}\t#{session_name}\t#{session_name}:#{window_index}.#{pane_index}\t#{@pi_tmux_managed}' 2>/dev/null |
     sed 's#^/dev/##'
 }
 
@@ -57,25 +67,27 @@ tmux_pane_map() {
 STATE_BY_PID=()
 STALE_CLEANED=0
 load_state_files() {
-  local adir f sid pid status cwd sname started activity sfile
+  local adir f sid pid status cwd sname started activity sfile is_blocked
   adir="$(psm_agents_dir)"
   [ -d "$adir" ] || return 0
   while IFS= read -r f; do
     [ -f "$f" ] || continue
     sid="$(basename "$f" .json)"
-    pid="$(jq -r '.pid // empty' "$f" 2>/dev/null)" || continue
+    # One jq call per file pulls every field we need (was 7 calls/file).
+    # Fields are | joined (non-whitespace IFS keeps empty fields; tab-IFS
+    # read collapses consecutive tabs and would misalign the payload).
+    IFS='|' read -r pid status cwd sname started activity sfile is_blocked \
+      < <(jq -r '[.pid, (.status // "unknown"), (.cwd // ""), (.session_name // ""), (.started_at // ""), ((.last_activity_at // .updated_at) // ""), (.session_file // ""), (.is_blocked // false)] | map(tostring) | join("|")' "$f" 2>/dev/null)
+    [ -n "$pid" ] || continue
     if [ -z "$pid" ] || ! pid_alive "$pid" || ! pid_is_pi "$pid"; then
       psm_debug "removing stale state $f (pid=$pid)"
       rm -f "$f"
       STALE_CLEANED=1
       continue
     fi
-    status="$(jq -r '.status // "unknown"' "$f" 2>/dev/null)"
-    cwd="$(jq -r '.cwd // ""' "$f" 2>/dev/null)"
-    sname="$(jq -r '.session_name // ""' "$f" 2>/dev/null)"
-    started="$(jq -r '.started_at // ""' "$f" 2>/dev/null)"
-    activity="$(jq -r '.last_activity_at // .updated_at // ""' "$f" 2>/dev/null)"
-    sfile="$(jq -r '.session_file // ""' "$f" 2>/dev/null)"
+    # The extension already derives status; is_blocked overrides any race
+    # (e.g. a state snapshot written just before the block was raised).
+    [ "$is_blocked" = "true" ] && status="blocked"
     STATE_BY_PID["$pid"]="$sid|$status|$cwd|$sname|$started|$activity|$sfile"
   done < <(find "$adir" -maxdepth 1 -name '*.json' -type f 2>/dev/null)
 }
@@ -115,21 +127,23 @@ find_session_for() {
 # Display helpers
 status_display() {
   case "$1" in
-    error)   printf '\033[31m● ERROR  \033[0m' ;;
-    waiting) printf '\033[33m● WAITING\033[0m' ;;
-    working) printf '\033[34m● WORKING\033[0m' ;;
-    idle)    printf '\033[32m● IDLE   \033[0m' ;;
-    *)       printf '\033[90m● ?      \033[0m' ;;
+    blocked)  printf '\033[35m● BLOCKED\033[0m' ;;  # magenta: needs the user now
+    error)    printf '\033[31m● ERROR  \033[0m' ;;
+    waiting)  printf '\033[33m● WAITING\033[0m' ;;
+    working)  printf '\033[34m● WORKING\033[0m' ;;
+    idle)     printf '\033[32m● IDLE   \033[0m' ;;
+    *)        printf '\033[90m● ?      \033[0m' ;;
   esac
 }
 
 status_rank() {
   case "$1" in
-    error) printf '0' ;;
-    waiting) printf '1' ;;
-    working) printf '2' ;;
-    idle) printf '3' ;;
-    *) printf '4' ;;
+    blocked) printf '0' ;;
+    error) printf '1' ;;
+    waiting) printf '2' ;;
+    working) printf '3' ;;
+    idle) printf '4' ;;
+    *) printf '5' ;;
   esac
 }
 
@@ -140,14 +154,15 @@ main() {
 
   load_state_files
 
-  # tty -> pane/session/loc map from tmux
-  local -A pane_by_tty sess_by_tty loc_by_tty
-  local tty pane sess loc
-  while IFS=$'\t' read -r tty pane sess loc; do
+  # tty -> pane/session/loc map from tmux (managed marker included)
+  local -A pane_by_tty sess_by_tty loc_by_tty managed_by_sess
+  local tty pane sess loc managed
+  while IFS=$'\t' read -r tty pane sess loc managed; do
     [ -n "$tty" ] || continue
     pane_by_tty["$tty"]="$pane"
     sess_by_tty["$tty"]="$sess"
     loc_by_tty["$tty"]="$loc"
+    managed_by_sess["$sess"]="${managed:-}"
   done < <(tmux_pane_map)
 
   # First pass: emit rows (13 fields, see header).
@@ -193,7 +208,13 @@ main() {
     fi
 
     [ -n "$cwd" ] || cwd=""
-    if tmux_session_managed "$sess" 2>/dev/null; then kind="dedicated"; else kind="loose"; fi
+    # Dedicated = launched by the manager: the session carries the marker
+    # (from the pane-map format column) or the name-prefix heuristic.
+    if [ "${managed_by_sess[$sess]:-}" = "1" ] || is_managed_session "$sess"; then
+      kind="dedicated"
+    else
+      kind="loose"
+    fi
     project="$(project_name "$cwd" "$use_sname")"
 
     rows+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \

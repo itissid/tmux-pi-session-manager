@@ -190,13 +190,13 @@ tty_nr_to_pts() {
 
 # pid_start_epoch <pid> — process start time as epoch seconds (via btime).
 pid_start_epoch() {
-  local pid="$1" btime start hz proc
+  local pid="$1" btime hz proc
+  pid_parse_stat "$pid" || { printf '%s' ''; return; }
   proc="$(proc_dir)"
   btime="$(awk '/^btime / { print $2 }' "$proc/stat" 2>/dev/null)"
-  start="$(awk '{ print $22 }' "$proc/$pid/stat" 2>/dev/null)"
-  [ -n "$btime" ] && [ -n "$start" ] || { printf '%s' ''; return; }
+  [ -n "$btime" ] || { printf '%s' ''; return; }
   hz="$(getconf CLK_TCK 2>/dev/null || printf '100')"
-  printf '%s' "$((btime + start / hz))"
+  printf '%s' "$((btime + PSM_START_TICKS / hz))"
 }
 
 # pid_exe_name <pid> — basename of /proc/<pid>/exe ("" when gone).
@@ -206,14 +206,19 @@ pid_exe_name() {
   printf '%s' "${exe##*/}"
 }
 
-# pid_comm <pid> — /proc/<pid>/comm ("" when gone).
+# pid_comm <pid> — /proc/<pid>/comm ("" when gone). Bash builtin read — no
+# subprocess, so discovery stays fast across thousands of processes.
 pid_comm() {
-  cat "$(proc_dir)/$1/comm" 2>/dev/null
+  local pid="$1" comm=""
+  { read -r comm < "$(proc_dir)/$pid/comm"; } 2>/dev/null
+  printf '%s' "$comm"
 }
 
 # pid_cmdline_first <pid> — first NUL-separated token of cmdline ("" when gone).
 pid_cmdline_first() {
-  tr '\0' '\n' < "$(proc_dir)/$1/cmdline" 2>/dev/null | head -n1
+  local pid="$1" first=""
+  { read -r -d '' first < "$(proc_dir)/$pid/cmdline"; } 2>/dev/null
+  printf '%s' "$first"
 }
 
 # pid_cwd <pid> — readlink of /proc/<pid>/cwd ("" when gone).
@@ -221,25 +226,50 @@ pid_cwd() {
   readlink "$(proc_dir)/$1/cwd" 2>/dev/null
 }
 
-# pid_tty_pts <pid> — "pts/N" for the process controlling tty ("" when none).
-pid_tty_pts() {
-  local nr
-  nr="$(awk '{ print $7 }' "$(proc_dir)/$1/stat" 2>/dev/null)"
-  tty_nr_to_pts "$nr"
+# pid_parse_stat <pid> — parse /proc/<pid>/stat with bash builtins only
+# (read + parameter expansion; no awk subprocess). Sets PSM_TTY_NR (field 7)
+# and PSM_START_TICKS (field 22). Non-zero when the entry is gone.
+# Field 2 is "(comm)" and comm may contain spaces or ')' — strip everything
+# through the LAST ')' (the kernel's closing paren), then remaining fields
+# align with stat fields 3..: state=3 … tty_nr=7 … starttime=22.
+pid_parse_stat() {
+  local pid="$1" line rest
+  PSM_TTY_NR=""; PSM_START_TICKS=""
+  { read -r line < "$(proc_dir)/$pid/stat"; } 2>/dev/null || return 1
+  rest="${line##*)}"
+  set -- $rest
+  [ "$#" -ge 20 ] || return 1
+  PSM_TTY_NR="$5"; PSM_START_TICKS="${20}"   # brace beyond $9: "$20" is "$2"+"0"
 }
 
-# pid_is_pi <pid> — true when the process fingerprints as a pi agent:
-# comm/cmdline match a known process name AND exe is a node-family runner.
+# pid_tty_pts <pid> — "pts/N" for the process controlling tty ("" when none).
+pid_tty_pts() {
+  pid_parse_stat "$1" || { printf '%s' ''; return; }
+  tty_nr_to_pts "$PSM_TTY_NR"
+}
+
+# pid_is_pi <pid> [names] [proc] — true when the process fingerprints as a pi
+# agent: comm/cmdline match a known process name AND exe is a node-family
+# runner. Cheap comm/cmdline checks run first via bash builtins (no subshells);
+# the readlink on exe runs only for name candidates. agents.sh passes `names`
+# and `proc` (both resolved once) so the per-process loop spawns nothing.
 pid_is_pi() {
-  local pid="$1" comm first exe names
-  comm="$(pid_comm "$pid")" || return 1
-  first="$(pid_cmdline_first "$pid")"
-  exe="$(pid_exe_name "$pid")"
-  case "$exe" in node | nodejs | bun) ;; *) return 1 ;; esac
-  names="${PSM_PROCESS_NAMES:-$(get_tmux_option @pi_tmux_process_names 'pi')}"
+  local pid="$1" names="${2:-${PSM_PROCESS_NAMES:-$(get_tmux_option @pi_tmux_process_names 'pi')}}"
+  local proc="${3:-$(proc_dir)}"
+  local comm="" first="" exe="" n
+  { read -r comm < "$proc/$pid/comm"; } 2>/dev/null || return 1
   for n in $names; do
-    [ "$comm" = "$n" ] && return 0
-    [ "$first" = "$n" ] && return 0
+    if [ "$comm" = "$n" ]; then
+      exe="$(pid_exe_name "$pid")"
+      case "$exe" in node | nodejs | bun) return 0 ;; *) return 1 ;; esac
+    fi
+  done
+  { read -r -d '' first < "$proc/$pid/cmdline"; } 2>/dev/null || first=""
+  for n in $names; do
+    if [ "$first" = "$n" ]; then
+      exe="$(pid_exe_name "$pid")"
+      case "$exe" in node | nodejs | bun) return 0 ;; *) return 1 ;; esac
+    fi
   done
   return 1
 }

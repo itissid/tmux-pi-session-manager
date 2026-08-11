@@ -48,6 +48,9 @@ send_notification() {
     waiting)
       title="Pi agent waiting for input"; icon="dialog-warning"
       body="$(printf '%s · %s\n%s\nPi finished a task and is waiting for your input.' "$project" "$loc" "$cwd")" ;;
+    blocked)
+      title="Pi agent needs your attention"; icon="dialog-question"
+      body="$(printf '%s · %s\n%s\nThe agent is waiting for your input (a question or a permission request).' "$project" "$loc" "$cwd")" ;;
     exited)
       title="Pi agent stopped unexpectedly"; icon="dialog-error"
       body="$(printf '%s · %s\n%s\nThe agent process died while it was working.' "$project" "$loc" "$cwd")" ;;
@@ -68,7 +71,7 @@ mark_notified() {
 # notification was sent. Mirrors the extension's transition logic.
 reconcile_one() {
   local file="$1" pid status last_stop cwd sname started
-  local input_at notify_last cfg_waiting cfg_error cfg_done cfg_min
+  local input_at notify_last cfg_waiting cfg_error cfg_done cfg_blocked cfg_min
   local kind
 
   pid="$(jq -r '.pid // empty' "$file" 2>/dev/null)"
@@ -89,6 +92,13 @@ reconcile_one() {
   fi
 
   case "$status" in
+    blocked)
+      cfg_blocked="$(psm_config_get notify_on_blocked 'true')"
+      [ "$cfg_blocked" = "true" ] || return 1
+      send_notification blocked "$file"
+      mark_notified "$file" "blocked"
+      return 0
+      ;;
     waiting)
       cfg_waiting="$(psm_config_get notify_on_waiting 'true')"
       cfg_done="$(psm_config_get notify_on_done 'false')"

@@ -24,7 +24,7 @@ assert_contains "finds both agents" "$out" $'%1'
 assert_contains "second pane present" "$out" $'%2'
 n="$(printf '%s\n' "$out" | wc -l)"
 assert_eq "two rows" "$n" "2"
-assert_contains "unknown status rank 4" "$out" $'4\t%1'
+assert_contains "unknown status rank 5" "$out" $'5\t%1'
 assert_contains "fallback session id pid:201" "$out" 'pid:201'
 assert_contains "loose kind" "$out" $'loose\tpid:201'
 assert_contains "loc format sess:win.pane" "$out" 't1:1.1'
@@ -42,7 +42,7 @@ now="$(date +%s)"
 write_state "sess-aaa" "$(printf '{"session_id":"sess-aaa","pid":201,"status":"working","cwd":"%s","started_at":%s,"last_activity_at":%s,"session_name":"api","alive":true}' "$SB/projA" "$((now * 1000))" "$((now * 1000))")"
 out="$(rows)"
 assert_contains "session id from state" "$out" 'sess-aaa'
-assert_contains "working rank 2" "$out" $'2\t%1'
+assert_contains "working rank 3" "$out" $'3\t%1'
 assert_contains "WORKING label" "$out" 'WORKING'
 assert_contains "project from session_name" "$out" $'\tapi #2\t'
 assert_not_contains "no basename fallback for named agent" "$out" $'projA #2'
@@ -76,6 +76,19 @@ second="$(printf '%s\n' "$out" | sed -n 2p | cut -f3)"
 assert_eq "waiting ranks second" "$second" "204"
 third="$(printf '%s\n' "$out" | sed -n 3p | cut -f3)"
 assert_eq "working ranks third" "$third" "205"
+
+t_section "blocked status outranks everything and is_blocked overrides"
+# make 203 blocked (it also has an error — blocked wins)
+write_state "sess-err" "$(printf '{"pid":203,"status":"blocked","cwd":"%s","started_at":%s,"is_blocked":true}' "$SB/projB" "$((now * 1000))")"
+# make 204 blocked via the is_blocked flag while status says working (race guard)
+write_state "sess-wait" "$(printf '{"pid":204,"status":"working","cwd":"%s","started_at":%s,"is_blocked":true}' "$SB/projB" "$((now * 1000))")"
+out="$(rows)"
+first="$(printf '%s\n' "$out" | head -n1 | cut -f3)"
+assert_eq "blocked ranks first" "$first" "203"
+assert_contains "BLOCKED label shown" "$out" "BLOCKED"
+second="$(printf '%s\n' "$out" | sed -n 2p | cut -f3)"
+assert_eq "is_blocked override ranks second" "$second" "204"
+assert_not_contains "override beats status field" "$out" $'working\t'
 
 t_section "stale state cleanup"
 mkdir -p "$(psm_state_dir)/agents"

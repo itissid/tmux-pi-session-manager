@@ -135,6 +135,9 @@ Written by the extension (atomic rename). Example:
   "last_error_at": null,
   "has_worked": true,
   "last_stop_reason": "stop",
+  "is_blocked": false,
+  "blocked_at": null,
+  "blocked_reason": null,
   "notify": {
     "last_sent_status": "waiting",
     "last_sent_at": 1786461612000
@@ -151,25 +154,36 @@ stream with this state machine (kept inside the extension):
 
 ```
 session_start      → reset; publish (idle)
-input              → last_user_input_at = now; agent_active = true; publish (working)
-agent_start        → agent_active = true; has_worked = true; last_error_at = null; publish (working)
+input              → last_user_input_at = now; agent_active = true; force_unblock; publish (working)
+agent_start        → agent_active = true; has_worked = true; last_error_at = null; force_unblock; publish (working)
 message_end        → if assistant && (stopReason=="error" || errorMessage): last_error_at = now
 auto_retry_end     → if !success: last_error_at = now; agent_active = false
 agent_settled      → agent_active = false; publish (derived)
+tool_execution_start / tool_execution_end → last_activity_at = now; if toolName == "ask_user_question": block / release
 turn_start / tool_execution_* / message_update / message_end → last_activity_at = now
+permission:ask / permission:resolved (extension events) → block / release
 session_shutdown   → write final state, flush
 ```
 
+
 Derived status at publish time (priority order):
 
-1. `working` — `agent_active`
-2. `error` — `last_error_at > last_user_input_at` (an error happened and the
+1. `blocked` — `is_blocked` (an `ask_user_question` dialog or a permission
+   confirmation is open; the agent waits on *you*, not the model)
+2. `working` — `agent_active`
+3. `error` — `last_error_at > last_user_input_at` (an error happened and the
    user has not responded since)
-3. `waiting` — `has_worked` (a run completed; pi is at the prompt awaiting input)
-4. `idle` — session open, no work yet (fresh session)
+4. `waiting` — `has_worked` (a run completed; pi is at the prompt awaiting input)
+5. `idle` — session open, no work yet (fresh session)
 
 Why this is defensible:
 
+- **blocked** comes from real signals: `tool_execution_start/end` with
+  `toolName == "ask_user_question"` (the tool blocks until the user answers)
+  and `permission:ask` / `permission:resolved` published by permission-gate
+  extensions. A counter tracks concurrent blockers so overlapping dialogs
+  cannot leave the state stuck; safety clears fire on `input` and
+  `agent_start`. `blocked_reason` is `question` or `permission`.
 - **working** is exactly `!ctx.isIdle()` from the agent events.
 - **waiting** = "pi is at the editor waiting for your input after doing work".
   This is the resting state of interactive pi after any turn, and the dedup
@@ -177,13 +191,12 @@ Why this is defensible:
   genuinely waits on user input here.
 - **error** uses Pi's own terminal failure signals. Tool-level `isError`
   results (e.g. a failed `bash`) are *not* fatal — the agent continues — so
-  they are deliberately excluded. Mid-run permission dialogs (`ctx.ui.confirm`)
-  cannot be distinguished from `working`; documented limitation.
+  they are deliberately excluded.
 - **idle** = fresh/empty session.
 
 The picker shows a fourth derived value `unknown` when no extension state
-exists (grey). Statuses sort: `error` < `waiting` < `working` < `idle` (what
-needs you floats up).
+exists (grey). Statuses sort: `blocked` < `error` < `waiting` < `working` <
+`idle` (what needs you floats up).
 
 ## 4. Discovery (agents.sh)
 
@@ -296,8 +309,9 @@ extension and the manager:
 }
 ```
 
-- **Events**: transition into `waiting` (agent finished a turn; pi awaits
-  input), transition into `error`, and (optional, off by default) clean
+- **Events**: transition into `blocked` (question or permission dialog —
+  content-free body), transition into `waiting` (agent finished a turn; pi
+  awaits input), transition into `error`, and (optional, off by default) clean
   completion (`notify_on_done`).
 - **Dedup**: the `notify.last_sent_status` field is compared *before* sending;
   a notification is sent only when the status changes. `WAITING → WAITING`

@@ -23,7 +23,7 @@ prefix + p   open the agent picker (fzf, live preview)
   runs inside a tmux pane is found via `/proc` fingerprints
   (comm/cmdline + node-family `exe`), joined `pid → tty → pane`.
   Agents launched manually (not through this tool) show up too.
-- **Multiple agents per directory** — each launch creates a *distinct* tmux
+- **Multiple agents per directory** — each launch creates a _distinct_ tmux
   session (`pi-<hash8>[-<n>]`); agents are never collapsed by cwd. The picker
   disambiguates duplicates with `#1`, `#2`, …
 - **Live status** — a Pi extension (auto-installed on launch) subscribes to Pi
@@ -35,7 +35,7 @@ prefix + p   open the agent picker (fzf, live preview)
   (highest rank) and you get a **notification** — showing only the project and
   directory, never the question text.
 - **Picker with live preview** — fzf shows `status · project · dir · age ·
-  location` and refreshes itself while open (fzf `--listen` API): agents
+location` and refreshes itself while open (fzf `--listen` API): agents
   appear/disappear as they start/stop, statuses update in place, and the dot
   before `WORKING` spins (`⠋⠙⠹…`). `age` is the time since the agent
   started (it grows monotonically — `last_activity` updates on every event,
@@ -50,9 +50,9 @@ prefix + p   open the agent picker (fzf, live preview)
   fingerprint (no PID-reuse accidents), SIGTERM → SIGKILL escalation, state
   cleanup.
 - **Notifications** — the extension notifies **in-process, event-driven**:
-  *blocked* (question/permission dialog — content-free body), *waiting for
-  input* (deduped — WAITING→WAITING is silent, but WAITING→WORKING→WAITING
-  notifies again), *agent error*, optional *task done*. `notify-send` on
+  _blocked_ (question/permission dialog — content-free body), _waiting for
+  input_ (deduped — WAITING→WAITING is silent, but WAITING→WORKING→WAITING
+  notifies again), _agent error_, optional _task done_. `notify-send` on
   Linux; configurable, off by default for done.
 - **`pi-tmux` CLI** — everything from the shell: `list`, `pick`, `launch`,
   `resume`, `kill`, `focus`, `current`, `status`, `notify`, `doctor`,
@@ -68,13 +68,13 @@ prefix + p   open the agent picker (fzf, live preview)
 
 ## Requirements
 
-| Tool | Purpose |
-| --- | --- |
-| `tmux` ≥ 3.2 | session/pane management, `display-popup` |
-| `fzf` | interactive picker |
-| `jq` | state/config JSON |
-| `pi` | the coding agent (any recent version; events used are stable) |
-| `notify-send` (optional) | desktop notifications |
+| Tool                     | Purpose                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `tmux` ≥ 3.2             | session/pane management, `display-popup`                      |
+| `fzf`                    | interactive picker                                            |
+| `jq`                     | state/config JSON                                             |
+| `pi`                     | the coding agent (any recent version; events used are stable) |
+| `notify-send` (optional) | desktop notifications                                         |
 
 Everything else is pure bash + one TypeScript extension file.
 
@@ -87,7 +87,7 @@ Everything else is pure bash + one TypeScript extension file.
 **With TPM:**
 
 ```tmux
-set -g @plugin 'you/tmux-pi-session-manager'
+set -g @plugin 'x0d7x/tmux-pi-session-manager'
 ```
 
 **Manually:** clone the repo and add to `~/.tmux.conf`:
@@ -125,10 +125,10 @@ ln -s "$(pwd)/bin/pi-tmux" ~/.local/bin/pi-tmux
 
 ### Keybindings
 
-| Keys | Action |
-| --- | --- |
+| Keys         | Action                                             |
+| ------------ | -------------------------------------------------- |
 | `prefix + P` | launch a Pi agent for the current pane's directory |
-| `prefix + p` | open the agent picker |
+| `prefix + p` | open the agent picker                              |
 
 `P` refuses to launch when you are already inside a dedicated agent session
 (use the picker to switch instead).
@@ -187,7 +187,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design. In short:
    permission gate); it is cleared on the matching end event, on `input`, and
    on `agent_start` (safety clears). A counter keeps overlapping dialogs from
    getting stuck.
-3. **Notifications**: sent by the extension itself on status *transitions*
+3. **Notifications**: sent by the extension itself on status _transitions_
    (dedup marker in the state file), so no polling is needed. `notify-send`
    with a stable `-r` replacement id per session.
 4. **Launch** (`scripts/launch.sh`): creates a unique `pi-<hash8>[-<n>]`
@@ -196,7 +196,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design. In short:
 5. **Kill** (`scripts/kill.sh`): resolve → re-verify `/proc` fingerprint →
    SIGTERM → SIGKILL after 3 s → remove state file. Confirmation via fzf.
 6. **Notifications contract** (bash + extension agree): a notification fires
-   only when status *changes*; WAITING→WAITING sends nothing; the marker is
+   only when status _changes_; WAITING→WAITING sends nothing; the marker is
    reset when the agent leaves the notifiable state, so WAITING→WORKING→WAITING
    notifies again. `blocked` notifications never include the question text or
    tool arguments — only project and directory.
@@ -207,20 +207,20 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design. In short:
 
 tmux options (`set -g @pi_tmux_*`):
 
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `@pi_tmux_list_key` | `p` | picker key (prefix + p) |
-| `@pi_tmux_launch_key` | `P` | launch key (prefix + P) |
-| `@pi_tmux_session_prefix` | `pi-` | dedicated session name prefix |
-| `@pi_tmux_command` | `pi` | binary to launch in a session |
-| `@pi_tmux_args` | *(empty)* | extra args for `pi` (e.g. `--model x`) |
-| `@pi_tmux_popup_width` / `@pi_tmux_popup_height` | `90%` | popup geometry |
-| `@pi_tmux_kill_confirm` | `on` | fzf confirmation before kill |
-| `@pi_tmux_picker_refresh` | `0.12` | live picker refresh interval (seconds) — spinner frames between full refreshes |
-| `@pi_tmux_age_refresh` | `5` | seconds between full discovery runs (statuses + the age column); set to `1` for near-instant updates |
-| `@pi_tmux_fzf_options` | *(empty)* | extra fzf flags |
-| `@pi_tmux_process_names` | `pi` | space-separated process names to detect (rebrands) |
-| `@pi_tmux_auto_install_extension` | `on` | copy the bundled extension on launch |
+| Option                                           | Default   | Meaning                                                                                              |
+| ------------------------------------------------ | --------- | ---------------------------------------------------------------------------------------------------- |
+| `@pi_tmux_list_key`                              | `p`       | picker key (prefix + p)                                                                              |
+| `@pi_tmux_launch_key`                            | `P`       | launch key (prefix + P)                                                                              |
+| `@pi_tmux_session_prefix`                        | `pi-`     | dedicated session name prefix                                                                        |
+| `@pi_tmux_command`                               | `pi`      | binary to launch in a session                                                                        |
+| `@pi_tmux_args`                                  | _(empty)_ | extra args for `pi` (e.g. `--model x`)                                                               |
+| `@pi_tmux_popup_width` / `@pi_tmux_popup_height` | `90%`     | popup geometry                                                                                       |
+| `@pi_tmux_kill_confirm`                          | `on`      | fzf confirmation before kill                                                                         |
+| `@pi_tmux_picker_refresh`                        | `0.12`    | live picker refresh interval (seconds) — spinner frames between full refreshes                       |
+| `@pi_tmux_age_refresh`                           | `5`       | seconds between full discovery runs (statuses + the age column); set to `1` for near-instant updates |
+| `@pi_tmux_fzf_options`                           | _(empty)_ | extra fzf flags                                                                                      |
+| `@pi_tmux_process_names`                         | `pi`      | space-separated process names to detect (rebrands)                                                   |
+| `@pi_tmux_auto_install_extension`                | `on`      | copy the bundled extension on launch                                                                 |
 
 Shared JSON config (`$XDG_CONFIG_HOME/pi-tmux-session-manager/config.json`,
 read by both the extension and the bash side):
@@ -237,26 +237,26 @@ read by both the extension and the bash side):
 }
 ```
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `enabled` | `true` | master switch (extension + notifications) |
-| `notify_on_waiting` | `true` | notify when the agent finishes and awaits input |
-| `notify_on_error` | `true` | notify when the agent reports an error |
-| `notify_on_done` | `false` | notify when a task completes (`stop` reason) |
-| `notify_on_blocked` | `true` | notify when the agent asks a question or needs a permission decision |
-| `notification_backend` | `auto` | `auto` / `notify-send` / `off` |
-| `min_attention_duration_ms` | `5000` | don't notify for turns settled faster than this |
+| Key                         | Default | Meaning                                                              |
+| --------------------------- | ------- | -------------------------------------------------------------------- |
+| `enabled`                   | `true`  | master switch (extension + notifications)                            |
+| `notify_on_waiting`         | `true`  | notify when the agent finishes and awaits input                      |
+| `notify_on_error`           | `true`  | notify when the agent reports an error                               |
+| `notify_on_done`            | `false` | notify when a task completes (`stop` reason)                         |
+| `notify_on_blocked`         | `true`  | notify when the agent asks a question or needs a permission decision |
+| `notification_backend`      | `auto`  | `auto` / `notify-send` / `off`                                       |
+| `min_attention_duration_ms` | `5000`  | don't notify for turns settled faster than this                      |
 
 Environment overrides (also respected by the test suite):
 
-| Var | Meaning |
-| --- | --- |
-| `PSM_STATE_DIR` | state dir (default `$XDG_STATE_HOME/pi-tmux-session-manager`) |
-| `PSM_CONFIG_DIR` | config dir (default `$XDG_CONFIG_HOME/pi-tmux-session-manager`) |
-| `PSM_TMUX` | tmux binary (useful for alternate sockets, e.g. `tmux -L other`) |
-| `PSM_PROCESS_NAMES` | process names for discovery (overrides tmux option) |
-| `PSM_NOTIFY_SEND` | notify-send binary override |
-| `PSM_DEBUG` | debug logging to stderr |
+| Var                 | Meaning                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `PSM_STATE_DIR`     | state dir (default `$XDG_STATE_HOME/pi-tmux-session-manager`)    |
+| `PSM_CONFIG_DIR`    | config dir (default `$XDG_CONFIG_HOME/pi-tmux-session-manager`)  |
+| `PSM_TMUX`          | tmux binary (useful for alternate sockets, e.g. `tmux -L other`) |
+| `PSM_PROCESS_NAMES` | process names for discovery (overrides tmux option)              |
+| `PSM_NOTIFY_SEND`   | notify-send binary override                                      |
+| `PSM_DEBUG`         | debug logging to stderr                                          |
 
 ---
 
@@ -267,7 +267,7 @@ Environment overrides (also respected by the test suite):
 - **No notifications** — check `notify-send` exists (`pi-tmux doctor`), the
   config `notification_backend` isn't `off`, and Wayland D-Bus notifications
   are working (`notify-send test`). Notifications only fire on status
-  *transitions* — a freshly launched idle agent won't notify.
+  _transitions_ — a freshly launched idle agent won't notify.
 - **`pi-tmux` can't find my agents** — agents must run inside a tmux pane with
   a controlling tty (not `setsid`/daemonized, not inside a different tmux
   server you're not querying). Use `PSM_TMUX` to point at another server.

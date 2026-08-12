@@ -1,8 +1,10 @@
 # tmux-pi-session-manager
 
 Manage, discover, monitor, and jump between **Pi coding agents** running inside
-tmux — with per-directory multi-agent support, event-driven status tracking,
+tmux with per-directory multi-agent support, event-driven status tracking,
 and deduplicated desktop notifications.
+
+![tmux-pi-sesion-manager](screenshot.png)
 
 Built for [Pi](https://github.com/earendil-works/pi) (`pi` coding agent) on
 Linux/Wayland with tmux + fzf. Conceptually inspired by

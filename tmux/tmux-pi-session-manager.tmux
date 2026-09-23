@@ -25,6 +25,10 @@ list_key="$(get_tmux_option @pi_tmux_list_key 'p')"
 bind_or_warn() {
   local key="$1" command="$2" desc="$3" current
   current="$("$PSM_TMUX" list-keys -T prefix "$key" 2>/dev/null | head -n1)"
+  # Sourcing tmux.conf again should not report our own binding as a collision.
+  if [ "$current" = "bind-key -T prefix $key run-shell \"$command\"" ]; then
+    return
+  fi
   if [ -n "$current" ]; then
     case "$current" in
       *previous-window* | *next-window* | *select-window* | *kill-window*)
